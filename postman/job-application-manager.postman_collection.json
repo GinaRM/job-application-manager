@@ -1,0 +1,384 @@
+{
+  "info": {
+    "name": "Job Application Manager",
+    "description": "CRUD endpoints. La variable baseUrl apunta al controller. La variable applicationId se llena sola al ejecutar el POST de creación.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080/api/v1/job-applications"
+    },
+    {
+      "key": "applicationId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Crear postulación (201)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201', function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test('Header Location presente y con el path completo', function () {",
+              "    const location = pm.response.headers.get('Location');",
+              "    pm.expect(location).to.be.a('string');",
+              "    pm.expect(location).to.include('/api/v1/job-applications/');",
+              "});",
+              "",
+              "pm.test('Status inicial es APPLIED', function () {",
+              "    pm.expect(pm.response.json().status).to.eql('APPLIED');",
+              "});",
+              "",
+              "const id = pm.response.json().id;",
+              "if (id) {",
+              "    pm.collectionVariables.set('applicationId', id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Globant\",\n  \"roleTitle\": \"Java Backend Developer\",\n  \"source\": \"LinkedIn\",\n  \"appliedOn\": \"2026-08-20\",\n  \"notes\": \"Vacante remota, stack Spring Boot\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] }
+      }
+    },
+    {
+      "name": "02 - Crear con campos vacíos (400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 400', function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "",
+              "pm.test('El cuerpo del error tiene estructura, no es texto suelto', function () {",
+              "    pm.response.to.be.json;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"\",\n  \"roleTitle\": \"\",\n  \"source\": \"LinkedIn\",\n  \"appliedOn\": null,\n  \"notes\": null\n}"
+        },
+        "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] }
+      }
+    },
+    {
+      "name": "03 - Crear intentando forzar el status (201, se ignora)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('El servidor ignora el status enviado por el cliente', function () {",
+              "    pm.expect(pm.response.json().status).to.eql('APPLIED');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Mercado Libre\",\n  \"roleTitle\": \"Backend Engineer\",\n  \"source\": \"Referido\",\n  \"appliedOn\": \"2026-08-21\",\n  \"notes\": null,\n  \"status\": \"OFFERED\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] }
+      }
+    },
+    {
+      "name": "04 - Listar todas (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Devuelve un array', function () {",
+              "    pm.expect(pm.response.json()).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] }
+      }
+    },
+    {
+      "name": "05 - Buscar por id (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('El id coincide con el solicitado', function () {",
+              "    pm.expect(String(pm.response.json().id)).to.eql(pm.collectionVariables.get('applicationId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}"]
+        }
+      }
+    },
+    {
+      "name": "06 - Buscar id inexistente (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404', function () {",
+              "    pm.response.to.have.status(404);",
+              "});",
+              "",
+              "pm.test('El error viene en JSON estructurado', function () {",
+              "    pm.response.to.be.json;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/999999",
+          "host": ["{{baseUrl}}"],
+          "path": ["999999"]
+        }
+      }
+    },
+    {
+      "name": "07 - Actualizar (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('El status sí cambia en el update', function () {",
+              "    pm.expect(pm.response.json().status).to.eql('INTERVIEWING');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Globant\",\n  \"roleTitle\": \"Java Backend Developer\",\n  \"source\": \"LinkedIn\",\n  \"status\": \"INTERVIEWING\",\n  \"appliedOn\": \"2026-08-20\",\n  \"notes\": \"Entrevista técnica agendada\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}"]
+        }
+      }
+    },
+    {
+      "name": "08 - Actualizar omitiendo notes (200, queda null)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Semántica de PUT: lo omitido se borra', function () {",
+              "    pm.expect(pm.response.json().notes).to.be.null;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Globant\",\n  \"roleTitle\": \"Java Backend Developer\",\n  \"source\": \"LinkedIn\",\n  \"status\": \"INTERVIEWING\",\n  \"appliedOn\": \"2026-08-20\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}"]
+        }
+      }
+    },
+    {
+      "name": "09 - Actualizar con status inválido (400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 400', function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Globant\",\n  \"roleTitle\": \"Java Backend Developer\",\n  \"source\": \"LinkedIn\",\n  \"status\": \"GHOSTED\",\n  \"appliedOn\": \"2026-08-20\",\n  \"notes\": null\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}"]
+        }
+      }
+    },
+    {
+      "name": "10 - Actualizar id inexistente (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Empresa Fantasma\",\n  \"roleTitle\": \"Backend\",\n  \"source\": \"LinkedIn\",\n  \"status\": \"APPLIED\",\n  \"appliedOn\": \"2026-08-20\",\n  \"notes\": null\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/999999",
+          "host": ["{{baseUrl}}"],
+          "path": ["999999"]
+        }
+      }
+    },
+    {
+      "name": "11 - Eliminar (204)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 204', function () {",
+              "    pm.response.to.have.status(204);",
+              "});",
+              "",
+              "pm.test('Sin cuerpo en la respuesta', function () {",
+              "    pm.expect(pm.response.text()).to.be.empty;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}"]
+        }
+      }
+    },
+    {
+      "name": "12 - Eliminar dos veces (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404 al borrar algo que ya no existe', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}"]
+        }
+      }
+    }
+  ]
+}
