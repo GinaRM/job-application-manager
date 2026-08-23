@@ -16,12 +16,12 @@ A small REST API to track my own job applications (company, role, source, status
 **Requirements:** Java 21, Docker, Maven Wrapper (included).
 
 1. Clone the repo.
-2. Copy `.env.example` to `.env` and adjust the values if needed (used by Docker Compose to configure the Postgres container).
+2. Copy `.env.example` to `.env` and adjust the values if needed. Docker Compose reads this file directly to configure the Postgres container — that's also where `DB_PORT=5433` comes from instead of Postgres's default `5432`. That's intentional, not a typo: publishing on `5433` avoids clashing with a Postgres instance already installed natively on your machine, which is worth knowing before you lose time chasing a "port already in use" error.
 3. Start the database:
    ```bash
    docker compose up -d
    ```
-4. Export the database credentials as environment variables so Spring Boot can pick them up (it reads them from the OS environment, not from `.env` directly). They must match what's in `.env`:
+4. Export the same database credentials as environment variables so Spring Boot can pick them up. This is a separate step from step 2, not a duplicate of it: Docker Compose reads `.env` itself, but Spring Boot never opens that file — it only reads the OS environment. Two different mechanisms read config from two different places, so the same values have to be provided to both. They must match what's in `.env`:
 
    Bash:
    ```bash
@@ -43,13 +43,43 @@ A small REST API to track my own job applications (company, role, source, status
 
 ## Endpoints
 
-| Method | Path                          | Description                  |
-|--------|-------------------------------|-------------------------------|
-| GET    | `/api/v1/job-applications`     | List all job applications     |
-| GET    | `/api/v1/job-applications/{id}`| Get one job application       |
-| POST   | `/api/v1/job-applications`     | Create a job application      |
-| PUT    | `/api/v1/job-applications/{id}`| Update a job application      |
-| DELETE | `/api/v1/job-applications/{id}`| Delete a job application      |
+| Method | Path                             | Description                | Success | Errors    |
+|--------|----------------------------------|-----------------------------|---------|-----------|
+| GET    | `/api/v1/job-applications`       | List all job applications   | 200     | —         |
+| GET    | `/api/v1/job-applications/{id}`  | Get one job application     | 200     | 404       |
+| POST   | `/api/v1/job-applications`       | Create a job application    | 201     | 400       |
+| PUT    | `/api/v1/job-applications/{id}`  | Update a job application    | 200     | 400, 404  |
+| DELETE | `/api/v1/job-applications/{id}`  | Delete a job application    | 204     | 404       |
+
+### Example: create a job application
+
+Request — `POST /api/v1/job-applications`
+
+```json
+{
+  "companyName": "Globant",
+  "roleTitle": "Java Backend Developer",
+  "source": "LinkedIn",
+  "appliedOn": "2026-08-20",
+  "notes": "Remote role, Spring Boot stack"
+}
+```
+
+Response — `201 Created` (with a `Location: /api/v1/job-applications/1` header)
+
+```json
+{
+  "id": 1,
+  "companyName": "Globant",
+  "roleTitle": "Java Backend Developer",
+  "source": "LinkedIn",
+  "status": "APPLIED",
+  "appliedOn": "2026-08-20",
+  "notes": "Remote role, Spring Boot stack"
+}
+```
+
+Note there's no `status` in the request — see [Design decisions](#design-decisions) for why.
 
 ## Progress log
 
@@ -94,8 +124,6 @@ This section is deliberately not a description of what the code does — it's *w
 **Alternative considered:** exposing the Lombok-generated `@Builder` as the way to construct new entities.
 
 **Why:** a builder lets a caller set any field in any combination — including fields that shouldn't be caller-controlled at creation time (`status`, see above), or skip a field entirely by accident. A factory method with a fixed parameter list is the one guarded entry point that decides what "a new, valid `JobApplication`" looks like; there's no path that skips it. In other words: a builder makes invalid states representable, and this removes that.
-
-**Open item:** `@Builder` is currently still public on the entity, so `JobApplication.builder()...build()` still works as an unguarded side door — it wasn't restricted when the builder was added for `toBuilder()`/mapping use. To make this decision hold in practice, not just in intent, the builder's visibility should be narrowed (e.g. `@Builder(access = AccessLevel.PACKAGE)`).
 
 ### `JobApplicationService` has no interface
 
