@@ -61,7 +61,7 @@ A small REST API to track my own job applications (company, role, source, status
 | PUT    | `/api/v1/job-applications/{applicationId}/interviews/{id}`     | Update an interview                 | 200     | 400, 404  |
 | DELETE | `/api/v1/job-applications/{applicationId}/interviews/{id}`     | Delete an interview                 | 204     | 404       |
 
-`{applicationId}` gets its own 404 on `POST` if the parent application doesn't exist. On every other route, `{id}` is resolved together with `{applicationId}` (`findByIdAndApplicationId` / `deleteByIdAndApplicationId`), so an interview that exists but belongs to a different application also 404s — see [Design decisions](#design-decisions).
+`POST` returns 400 on validation failure like every other write endpoint, plus its own 404 if the parent `{applicationId}` doesn't exist. On every other route, `{id}` is resolved together with `{applicationId}` (`findByIdAndApplicationId` / `deleteByIdAndApplicationId`), so an interview that exists but belongs to a different application also 404s — see [Design decisions](#design-decisions).
 
 ### Example: create a job application
 
@@ -97,7 +97,7 @@ Note there's no `status` in the request — see [Design decisions](#design-decis
 
 ### Week 1 — Skeleton and persistence
 
-- Designed and implemented the `JobApplication` entity with a full CRUD flow: controller, service, repository, request/response DTOs, and MapStruct mappers.
+- Designed and implemented the `JobApplication` entity with a full CRUD flow: controller, service, repository, request/response DTOs, and a MapStruct mapper.
 - Set up PostgreSQL locally with Docker Compose.
 - Added the first Flyway migration to create the `job_application` table — using migrations instead of Hibernate's `ddl-auto` so the database schema is version-controlled, reviewable, and repeatable across environments, rather than auto-generated and implicit.
 - Manually tested every endpoint (create, list, get by id, update, delete) with a Postman collection covering the happy path plus edge cases: validation failure, an attempt to set `status` on creation, not-found, an invalid enum value, and deleting the same resource twice. Collection lives in [`/postman`](./postman).
@@ -106,7 +106,7 @@ Note there's no `status` in the request — see [Design decisions](#design-decis
 
 - Added the `Interview` entity with a nested CRUD (`/api/v1/job-applications/{applicationId}/interviews`), including its own request/response DTOs, MapStruct mapper, service, repository, and controller — same layering discipline as `JobApplication`.
 - Tightened Bean Validation on every request DTO, both existing and new.
-- Replaced the ad-hoc `ErrorResponse` with `ProblemDetail` (RFC 7807) inside `GlobalExceptionHandler`, so every error path — validation, not-found, unreadable body, unexpected exception — returns the same consistent shape instead of a per-exception one-off.
+- Replaced the ad-hoc `ErrorResponse` with `ProblemDetail` (RFC 9457, the 2023 revision of the original RFC 7807) inside `GlobalExceptionHandler`, so every error path — validation, not-found, unreadable body, unexpected exception — returns the same consistent shape instead of a per-exception one-off.
 - Renamed `JobApplicationNotFoundException` to `ResourceNotFoundException` and made it take a resource name, so `Interview` reuses the same 404 path instead of a second entity-specific exception class.
 - Several design decisions this week — nested routes, `@ManyToOne`-only relation, ownership-checked lookups, cascading delete, and the `PENDING` factory default — see [Design decisions](#design-decisions).
 - Added a second Postman collection dedicated to interviews, covering the nested CRUD plus a deliberate cross-application isolation test.
