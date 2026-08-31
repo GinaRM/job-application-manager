@@ -5,7 +5,7 @@ import com.gina.job_application_manager.enums.ApplicationStatus;
 import java.time.LocalDate;
 
 public record JobApplicationResponse(
-        long id,
+        Long id,
         String companyName,
         String roleTitle,
         String source,

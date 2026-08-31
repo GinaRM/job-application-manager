@@ -4,7 +4,7 @@ import com.gina.job_application_manager.dto.request.JobApplicationRequest;
 import com.gina.job_application_manager.dto.request.JobApplicationUpdateRequest;
 import com.gina.job_application_manager.dto.response.JobApplicationResponse;
 import com.gina.job_application_manager.entity.JobApplication;
-import com.gina.job_application_manager.exception.JobApplicationNotFoundException;
+import com.gina.job_application_manager.exception.ResourceNotFoundException;
 import com.gina.job_application_manager.mapper.JobApplicationMapper;
 import com.gina.job_application_manager.repository.JobApplicationRepository;
 import org.springframework.stereotype.Service;
@@ -42,7 +42,7 @@ public class JobApplicationService {
     @Transactional(readOnly = true)
      public JobApplicationResponse getJobApplicationById(Long id) {
         JobApplication jobApplication = jobApplicationRepository.findById(id)
-                .orElseThrow(() -> new JobApplicationNotFoundException(id));
+                .orElseThrow(() -> new ResourceNotFoundException("Job Application", id));
         return jobApplicationMapper.toResponse(jobApplication);
      }
 
@@ -56,7 +56,7 @@ public class JobApplicationService {
     @Transactional
     public JobApplicationResponse updateJobApplication(Long id, JobApplicationUpdateRequest request) {
         JobApplication jobApplication = jobApplicationRepository.findById(id)
-                .orElseThrow(() -> new JobApplicationNotFoundException(id));
+                .orElseThrow(() -> new ResourceNotFoundException("Job Application", id));
         jobApplicationMapper.updateEntityFromRequest(request, jobApplication);
         return jobApplicationMapper.toResponse(jobApplication);
     }
@@ -64,7 +64,7 @@ public class JobApplicationService {
     @Transactional
     public void deleteJobApplicationById(Long id) {
         if (!jobApplicationRepository.existsById(id)) {
-            throw new JobApplicationNotFoundException(id);
+            throw new ResourceNotFoundException("Job Application", id);
         }
         jobApplicationRepository.deleteById(id);
     }

@@ -11,7 +11,7 @@ import org.mapstruct.MappingTarget;
 @Mapper (componentModel = "spring")
 public interface JobApplicationMapper {
 
-    JobApplicationResponse toResponse(JobApplication entity);
+    JobApplicationResponse toResponse(JobApplication jobApplication);
 
-    void updateEntityFromRequest(JobApplicationUpdateRequest request, @MappingTarget JobApplication entity);
+    void updateEntityFromRequest(JobApplicationUpdateRequest request, @MappingTarget JobApplication jobApplication);
 }

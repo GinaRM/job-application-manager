@@ -1,0 +1,433 @@
+{
+  "info": {
+    "name": "Job Application Manager - Interviews",
+    "description": "CRUD anidado de entrevistas. La petición 00 crea una postulación y guarda su id en applicationId. La 01 crea una entrevista y guarda interviewId. El resto reutiliza ambos. Ejecutar en orden con el Collection Runner.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080/api/v1/job-applications"
+    },
+    {
+      "key": "applicationId",
+      "value": ""
+    },
+    {
+      "key": "interviewId",
+      "value": ""
+    },
+    {
+      "key": "otherApplicationId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Crear postulación base (201)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201', function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "const id = pm.response.json().id;",
+              "if (id) { pm.collectionVariables.set('applicationId', id); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Globant\",\n  \"roleTitle\": \"Java Backend Developer\",\n  \"source\": \"LinkedIn\",\n  \"appliedOn\": \"2026-08-20\",\n  \"notes\": \"Para probar entrevistas\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] }
+      }
+    },
+    {
+      "name": "00b - Crear segunda postulación (para prueba de aislamiento)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201', function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "const id = pm.response.json().id;",
+              "if (id) { pm.collectionVariables.set('otherApplicationId', id); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"companyName\": \"Mercado Libre\",\n  \"roleTitle\": \"Backend Engineer\",\n  \"source\": \"Referido\",\n  \"appliedOn\": \"2026-08-21\",\n  \"notes\": null\n}"
+        },
+        "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] }
+      }
+    },
+    {
+      "name": "01 - Crear entrevista (201)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201', function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "pm.test('Header Location con la ruta anidada completa', function () {",
+              "    const loc = pm.response.headers.get('Location');",
+              "    pm.expect(loc).to.include('/job-applications/');",
+              "    pm.expect(loc).to.include('/interviews/');",
+              "});",
+              "pm.test('Resultado inicial es PENDING', function () {",
+              "    pm.expect(pm.response.json().result).to.eql('PENDING');",
+              "});",
+              "pm.test('El applicationId del response coincide con el de la URL', function () {",
+              "    pm.expect(String(pm.response.json().applicationId)).to.eql(pm.collectionVariables.get('applicationId'));",
+              "});",
+              "const id = pm.response.json().id;",
+              "if (id) { pm.collectionVariables.set('interviewId', id); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"TECHNICAL\",\n  \"scheduledAt\": \"2026-09-15T10:00:00\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews"]
+        }
+      }
+    },
+    {
+      "name": "02 - Crear entrevista sin campos obligatorios (400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 400', function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test('Trae invalidFields', function () {",
+              "    pm.expect(pm.response.json()).to.have.property('invalidFields');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": null,\n  \"scheduledAt\": null\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews"]
+        }
+      }
+    },
+    {
+      "name": "03 - Crear entrevista con tipo inválido (400)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 400', function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"LUNCH\",\n  \"scheduledAt\": \"2026-09-15T10:00:00\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews"]
+        }
+      }
+    },
+    {
+      "name": "04 - Crear entrevista en postulación inexistente (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"TECHNICAL\",\n  \"scheduledAt\": \"2026-09-15T10:00:00\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/999999/interviews",
+          "host": ["{{baseUrl}}"],
+          "path": ["999999", "interviews"]
+        }
+      }
+    },
+    {
+      "name": "05 - Listar entrevistas de la postulación (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Devuelve un array', function () {",
+              "    pm.expect(pm.response.json()).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews"]
+        }
+      }
+    },
+    {
+      "name": "06 - Obtener entrevista por id (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('El id coincide', function () {",
+              "    pm.expect(String(pm.response.json().id)).to.eql(pm.collectionVariables.get('interviewId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews/{{interviewId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews", "{{interviewId}}"]
+        }
+      }
+    },
+    {
+      "name": "07 - Aislamiento: entrevista real pero postulación equivocada (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404 - la entrevista no pertenece a esa postulación', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{otherApplicationId}}/interviews/{{interviewId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{otherApplicationId}}", "interviews", "{{interviewId}}"]
+        }
+      }
+    },
+    {
+      "name": "08 - Actualizar entrevista, cambiar resultado (200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('El resultado cambió a PASSED', function () {",
+              "    pm.expect(pm.response.json().result).to.eql('PASSED');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"TECHNICAL\",\n  \"scheduledAt\": \"2026-09-15T10:00:00\",\n  \"result\": \"PASSED\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews/{{interviewId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews", "{{interviewId}}"]
+        }
+      }
+    },
+    {
+      "name": "09 - Actualizar entrevista con postulación equivocada (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"TECHNICAL\",\n  \"scheduledAt\": \"2026-09-15T10:00:00\",\n  \"result\": \"FAILED\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/{{otherApplicationId}}/interviews/{{interviewId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{otherApplicationId}}", "interviews", "{{interviewId}}"]
+        }
+      }
+    },
+    {
+      "name": "10 - Eliminar con postulación equivocada (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404 - no borra una entrevista de otra postulación', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{otherApplicationId}}/interviews/{{interviewId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{otherApplicationId}}", "interviews", "{{interviewId}}"]
+        }
+      }
+    },
+    {
+      "name": "11 - Eliminar entrevista (204)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 204', function () {",
+              "    pm.response.to.have.status(204);",
+              "});",
+              "pm.test('Sin cuerpo', function () {",
+              "    pm.expect(pm.response.text()).to.be.empty;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews/{{interviewId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews", "{{interviewId}}"]
+        }
+      }
+    },
+    {
+      "name": "12 - Eliminar de nuevo (404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 404 al borrar algo ya borrado', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/{{applicationId}}/interviews/{{interviewId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["{{applicationId}}", "interviews", "{{interviewId}}"]
+        }
+      }
+    }
+  ]
+}
