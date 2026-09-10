@@ -10,6 +10,9 @@ A small REST API to track my own job applications (company, role, source, status
 - Flyway (database migrations)
 - MapStruct + Lombok
 - Maven
+- JUnit 5, Mockito, AssertJ — unit tests
+- Testcontainers + RestAssured — integration tests against a real PostgreSQL
+- JaCoCo — coverage reporting
 
 ## Getting started
 
@@ -111,7 +114,38 @@ Note there's no `status` in the request — see [Design decisions](#design-decis
 - Several design decisions this week — nested routes, `@ManyToOne`-only relation, ownership-checked lookups, cascading delete, and the `PENDING` factory default — see [Design decisions](#design-decisions).
 - Added a second Postman collection dedicated to interviews, covering the nested CRUD plus a deliberate cross-application isolation test.
 
-## API testing
+### Week 3 — Testing
+
+- **Unit tests** for `JobApplicationService` and `InterviewService` with JUnit 5 + Mockito: mocked repositories, the real MapStruct mapper wired in as a `@Spy`, and `ArgumentCaptor` to assert exactly what the service hands the repository — id still null on create, `status`/`result` forced by the factory regardless of the request, and no `save()` call on update.
+- **Integration tests** with Testcontainers (a real `postgres:17-alpine`) + RestAssured over HTTP: derived queries running against Postgres, Flyway applying migrations on startup, `ON DELETE CASCADE` removing an application's interviews, and the `GlobalExceptionHandler` error paths (400 validation, 404 not found, invalid enum) asserted on the response body.
+- Coverage measured with JaCoCo — both services and `JobApplicationController` at 100%; `InterviewController` left as explicit pending work (see [Testing](#testing)).
+- Test sources reorganised into `unit/`, `integration/`, and `util/` packages, with shared fixtures in `*TestData` factory classes.
+
+## Testing
+
+Two levels, each covering what the other structurally can't.
+
+**Unit tests (`unit/`)** exercise the service layer in isolation with JUnit 5 and Mockito. The repository is mocked; the real MapStruct mapper is wired in as a `@Spy`, so the DTO↔entity mapping runs for real instead of being stubbed away. `ArgumentCaptor` pins down exactly what the service passes to the repository — a new entity still has a null id, its status is forced to `APPLIED` (or an interview's result to `PENDING`) no matter what the request says, and `updateJobApplication` / `updateInterview` never call `save()` because the change rides on JPA dirty checking inside the transaction. The not-found paths and the "no interview without a parent application" rule are checked here too.
+
+**Integration tests (`integration/`)** stand up the full stack: `@SpringBootTest` on a random port with a real `postgres:17-alpine` container from Testcontainers, and RestAssured making real HTTP calls. These assert what a mock can't — that the derived queries actually run against Postgres, that Flyway applies the migrations on startup, and that `ON DELETE CASCADE` deletes an application's interviews along with it. The error paths through `GlobalExceptionHandler` (400 on validation, 404 on a missing resource, 400 on an invalid enum) are verified on the wire, from request body to JSON response shape.
+
+### What goes where, and why
+
+The dividing line is *where the behaviour actually lives*. Logic that lives in Java — the forced initial status, the 404 when an id doesn't resolve, the decision not to call `save()` on update — is unit-tested: that's the fastest way to pin it down, and a mock reproduces it faithfully. Behaviour that lives *outside* the Java code is integration-tested, because a mock would only be testing my assumptions about it.
+
+The clearest example is the cascading delete. `ON DELETE CASCADE` is declared on the foreign key in the migration — it is enforced by PostgreSQL, not by `JobApplicationService`. A unit test with a mocked repository could only assert that the service calls `deleteById`; it could never prove the interview rows actually disappear, because nothing in the Java code makes them disappear. Only a test against a real database can. So that rule is verified in `JobApplicationIntegrationTest`, running against Postgres, asserting the interview is gone once its application is deleted.
+
+### Running the tests
+
+```bash
+./mvnw clean test
+```
+
+Testcontainers needs Docker running and pulls `postgres:17-alpine` on the first run. JaCoCo writes a coverage report to `target/site/jacoco/index.html`.
+
+Coverage reflects a scoping decision, not an accident: the `JobApplication` flow is tested end to end — service and controller both at 100%, unit plus integration — while the `Interview` flow is covered at the service layer (100%) and on its parent-isolation rule, leaving its controller layer as explicit pending work rather than an overlooked gap. The number is a diagnostic here, not a target; there's no global percentage being chased.
+
+## Manual API testing (Postman)
 
 Two Postman collections live in [`/postman`](./postman), both import directly with variables pre-wired and test assertions on every request, so **Run Collection** doubles as a quick regression check:
 
@@ -204,6 +238,22 @@ This section is deliberately not a description of what the code does — it's *w
 
 **Why:** this is the same rule as `JobApplication`'s initial `status`, applied to the same kind of field — see [The initial status is not accepted from the client](#the-initial-status-is-not-accepted-from-the-client). A newly scheduled interview hasn't happened yet, so `PENDING` isn't a default a caller could reasonably override at creation time, it's a fact about what "newly scheduled" means. Leaving `result` out of the create DTO enforces that the same way: there's no field to set it through, so a caller can't create an interview that's already `PASSED` or `CANCELLED` before it's taken place. Moving it to `PASSED`/`FAILED`/etc. is only meaningful once the interview exists, which is exactly what `InterviewUpdateRequest` is for.
 
+### `@ServiceConnection` instead of manually wiring the container into Spring
+
+**Decision:** `AbstractIntegrationTest` marks the `PostgreSQLContainer` with `@ServiceConnection` and lets Spring Boot derive the JDBC url, username, and password from the running container.
+
+**Alternative considered:** the older `@DynamicPropertySource` approach — a static method that reads `getJdbcUrl()`, `getUsername()`, `getPassword()` off the container and pushes each into a `DynamicPropertyRegistry`.
+
+**Why:** `@DynamicPropertySource` means hand-copying three container getters into three property keys in every integration base class, and keeping that mapping correct if the datasource config ever shifts. `@ServiceConnection` (Spring Boot 3.1+) recognises the Postgres container and derives the whole connection from it — less boilerplate, and nothing to fall out of sync.
+
+### Integration tests run against real PostgreSQL, not H2 or mocks
+
+**Decision:** integration tests run against a real `postgres:17-alpine` in a container.
+
+**Alternative considered:** an in-memory H2 database in Postgres-compatibility mode, or skipping integration tests entirely and covering everything with mocked repositories.
+
+**Why:** the things worth integration-testing are exactly the things H2 and mocks get wrong. `ON DELETE CASCADE`, derived-query behaviour, enum and date type handling, Flyway migrations written in Postgres SQL — H2's compatibility mode approximates some of this and silently diverges on the rest, and a mock reproduces none of it. Testing against the same database the app runs on in production means the integration tests fail for the same reasons production would.
+
 ## Scalability considerations
 
 None of this is wired up yet, on purpose — it's sized for one user (me) hitting it from Postman, not production traffic. Here's specifically what's missing and why it matters:
@@ -213,3 +263,9 @@ None of this is wired up yet, on purpose — it's sized for one user (me) hittin
 - **Only one index exists** (`idx_job_application_status`), and it's worth being precise about what that buys and what it doesn't. An index lets Postgres jump to matching rows instead of scanning the whole table. `idx_job_application_status` speeds up any query filtered by status (`WHERE status = 'INTERVIEWING'`), which is a reasonable bet since "show me my active applications" is a near-certain future query. It does nothing for other access patterns — sorting by `appliedOn`, or searching by `companyName`, still forces a full scan today, because no index covers them. That's not an oversight so much as a sequencing choice: every index speeds up reads on its column but slows down every insert/update (the index has to be maintained) and costs disk space, so adding indexes ahead of an actual query that needs them is guessing. Further indexes belong in the migration that ships the endpoint that actually queries by them.
 - **No rate limiting.** Nothing stops a single caller — a buggy script, a retry loop, a scraper — from sending requests as fast as the network allows. Irrelevant while this only runs locally; the moment it's reachable from anywhere, one client can degrade or exhaust the service for everyone (or run up database load). This is a service-availability/fairness concern, not an auth concern, and is normally handled at the edge (gateway/reverse proxy) or in-app (e.g. Bucket4j, keyed by API key or IP).
 - **No observability.** No structured logging, no metrics, no request tracing, no correlation ID tying a request to what happened downstream. Right now, if something breaks in production, the only signal is an external symptom (a failed request) with no way to find out why from the server side — no log line to grep, no metric to alert on, no trace to follow. Closing this gap — structured JSON logs, Spring Boot Actuator (health/metrics), and a per-request correlation ID — is planned for a later stage of the project, once the core API and its tests are solid.
+
+## Roadmap / Planned improvements
+
+**State–date invariant for interviews.** A terminal result implies the interview has already taken place, so its `scheduledAt` can't be in the future: an interview marked `PASSED`, `FAILED`, or `CANCELLED` must carry a past-or-present date, and only a `PENDING` interview may be scheduled ahead. Stated the other way round — "reject a future date when the result is `FAILED` or `PASSED`" — it's the same rule but easy to get backwards; the invariant is *terminal result ⟹ date not in the future*. This is a domain rule that isn't enforced today: the update endpoint will currently accept `"result": "PASSED"` alongside a `scheduledAt` next month. It belongs as a cross-field validation on `InterviewUpdateRequest`.
+
+**Coverage for the `InterviewController` layer.** The `Interview` HTTP flow — routing, status codes, the nested-route 404s — is currently only exercised incidentally. It needs its own integration test alongside `JobApplicationIntegrationTest`.
