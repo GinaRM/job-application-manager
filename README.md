@@ -13,6 +13,7 @@ A small REST API to track my own job applications (company, role, source, status
 - JUnit 5, Mockito, AssertJ — unit tests
 - Testcontainers + RestAssured — integration tests against a real PostgreSQL
 - JaCoCo — coverage reporting
+- Docker (multi-stage build) — Postgres already ran in a container; now the app itself is packaged into one too
 
 ## Getting started
 
@@ -43,6 +44,24 @@ A small REST API to track my own job applications (company, role, source, status
    ```
    Flyway runs the migration automatically on startup and creates the `job_application` table.
 6. The API is available at `http://localhost:8080/api/v1/job-applications`.
+
+### Running the app itself in Docker (Stage 4, temporary)
+
+The app can also be built and run as a container, separately from the Postgres one:
+
+```bash
+docker build -t job-application-manager .
+
+docker run --rm -p 8080:8080 \
+  -e DB_HOST=host.docker.internal \
+  -e DB_PORT=5433 \
+  -e DB_USERNAME=postgres \
+  -e DB_PASSWORD=<your-password> \
+  -e DB_NAME=application_manager_db \
+  job-application-manager
+```
+
+`DB_HOST=host.docker.internal` is what lets the app container reach the Postgres container, which is only published on the host's `localhost` today. Passing credentials by hand like this is a stopgap, not the intended setup — Stage 5 wires both containers together with `docker compose` so they share a network and the credentials come from `.env` instead of the command line.
 
 ## Endpoints
 
@@ -98,14 +117,14 @@ Note there's no `status` in the request — see [Design decisions](#design-decis
 
 ## Progress log
 
-### Week 1 — Skeleton and persistence
+### Stage 1 — Skeleton and persistence
 
 - Designed and implemented the `JobApplication` entity with a full CRUD flow: controller, service, repository, request/response DTOs, and a MapStruct mapper.
 - Set up PostgreSQL locally with Docker Compose.
 - Added the first Flyway migration to create the `job_application` table — using migrations instead of Hibernate's `ddl-auto` so the database schema is version-controlled, reviewable, and repeatable across environments, rather than auto-generated and implicit.
 - Manually tested every endpoint (create, list, get by id, update, delete) with a Postman collection covering the happy path plus edge cases: validation failure, an attempt to set `status` on creation, not-found, an invalid enum value, and deleting the same resource twice. Collection lives in [`/postman`](./postman).
 
-### Week 2 — Layers, errors, and validation
+### Stage 2 — Layers, errors, and validation
 
 - Added the `Interview` entity with a nested CRUD (`/api/v1/job-applications/{applicationId}/interviews`), including its own request/response DTOs, MapStruct mapper, service, repository, and controller — same layering discipline as `JobApplication`.
 - Tightened Bean Validation on every request DTO, both existing and new.
@@ -114,12 +133,20 @@ Note there's no `status` in the request — see [Design decisions](#design-decis
 - Several design decisions this week — nested routes, `@ManyToOne`-only relation, ownership-checked lookups, cascading delete, and the `PENDING` factory default — see [Design decisions](#design-decisions).
 - Added a second Postman collection dedicated to interviews, covering the nested CRUD plus a deliberate cross-application isolation test.
 
-### Week 3 — Testing
+### Stage 3 — Testing
 
 - **Unit tests** for `JobApplicationService` and `InterviewService` with JUnit 5 + Mockito: mocked repositories, the real MapStruct mapper wired in as a `@Spy`, and `ArgumentCaptor` to assert exactly what the service hands the repository — id still null on create, `status`/`result` forced by the factory regardless of the request, and no `save()` call on update.
 - **Integration tests** with Testcontainers (a real `postgres:17-alpine`) + RestAssured over HTTP: derived queries running against Postgres, Flyway applying migrations on startup, `ON DELETE CASCADE` removing an application's interviews, and the `GlobalExceptionHandler` error paths (400 validation, 404 not found, invalid enum) asserted on the response body.
 - Coverage measured with JaCoCo — both services and `JobApplicationController` at 100%; `InterviewController` left as explicit pending work (see [Testing](#testing)).
 - Test sources reorganised into `unit/`, `integration/`, and `util/` packages, with shared fixtures in `*TestData` factory classes.
+
+### Stage 4 — Containerising the app
+
+- Wrote a multi-stage `Dockerfile`: separate stages for resolving dependencies, building the jar, extracting the Spring Boot layers, and a slim runtime stage that only copies in what's needed to run.
+- Adapted the official Spring Boot Dockerfile example to Spring Boot 4: the layer-extraction mode changed from `-Djarmode=layertools` to `-Djarmode=tools`, and the extracted paths changed too (`extracted/lib/`, `extracted/app.jar`).
+- The final stage runs as a non-root user rather than root.
+- Switched the runtime base image from `eclipse-temurin:21-jre-jammy` (Ubuntu-based) to `eclipse-temurin:21-jre-alpine`, which dropped the final image size from 508 MB to 387 MB.
+- Confirmed the image builds and runs standalone with `docker run`, pointed at the Postgres container via env vars. Wiring it into `docker compose` alongside Postgres, instead of passing credentials by hand on the command line, is Stage 5.
 
 ## Testing
 
@@ -253,6 +280,24 @@ This section is deliberately not a description of what the code does — it's *w
 **Alternative considered:** an in-memory H2 database in Postgres-compatibility mode, or skipping integration tests entirely and covering everything with mocked repositories.
 
 **Why:** the things worth integration-testing are exactly the things H2 and mocks get wrong. `ON DELETE CASCADE`, derived-query behaviour, enum and date type handling, Flyway migrations written in Postgres SQL — H2's compatibility mode approximates some of this and silently diverges on the rest, and a mock reproduces none of it. Testing against the same database the app runs on in production means the integration tests fail for the same reasons production would.
+
+### Multi-stage build: build with the JDK, run with the JRE
+
+**Decision:** the `deps`, `package`, and `extract` stages all build on `eclipse-temurin:21-jdk-jammy`, which includes the full JDK (compiler, build tooling). The final stage starts fresh from `eclipse-temurin:21-jre-alpine`, which only has the JRE, and copies in nothing but the extracted app layers.
+
+**Why:** the running container only ever needs to execute a jar, never to compile one. Maven, the JDK, the source tree, and every build-time dependency are needed to *produce* `app.jar`, but they're dead weight — and extra attack surface — in the image that actually runs. A multi-stage build lets each intermediate stage carry all of that weight and then discards it: only the final `FROM` becomes the shipped image, so it ends up with just the JRE and the app, not the toolchain that built it.
+
+### Alpine over Ubuntu for the runtime base
+
+**Decision:** the final stage is `eclipse-temurin:21-jre-alpine`, not `eclipse-temurin:21-jre-jammy`.
+
+**Why:** Alpine is a much smaller base distribution than Ubuntu (Jammy), and switching to it dropped the final image from 508 MB to 387 MB without touching the app itself. The honest trade-off: Alpine uses `musl` instead of `glibc`, which occasionally causes friction with Java (native library compatibility, some DNS edge cases) — that didn't surface here, but it's the reason Alpine isn't a universally "free" choice. It's also possible to go smaller still with a custom `jlink` runtime or a distroless base image, but that's chasing the absolute minimum for a project where 387 MB is already well within scope — not pursued here.
+
+### Non-root user in the container
+
+**Decision:** the final stage creates an unprivileged `appuser` and runs the app as that user instead of the default root.
+
+**Why:** if the app is ever compromised, a container running as root hands an attacker far more than one running as a limited user — root inside the container is a short step from root on the host in a surprising number of misconfigurations. Creating a dedicated user costs a few lines in the Dockerfile; it's cheap defense in depth.
 
 ## Scalability considerations
 
