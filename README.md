@@ -13,19 +13,39 @@ A small REST API to track my own job applications (company, role, source, status
 - JUnit 5, Mockito, AssertJ — unit tests
 - Testcontainers + RestAssured — integration tests against a real PostgreSQL
 - JaCoCo — coverage reporting
-- Docker (multi-stage build) — Postgres already ran in a container; now the app itself is packaged into one too
+- Docker (multi-stage build) + Docker Compose — the app and PostgreSQL run as two wired-together services
 
 ## Getting started
 
-**Requirements:** Java 21, Docker, Maven Wrapper (included).
+**Requirements:** Docker. (Java 21 and the Maven Wrapper only if you want to run the app from your IDE — see below.)
+
+There are two ways to run this project, and they're genuinely different workflows.
+
+### Everything in containers
+
+The whole system — app and database — comes up with one command:
 
 1. Clone the repo.
-2. Copy `.env.example` to `.env` and adjust the values if needed. Docker Compose reads this file directly to configure the Postgres container — that's also where `DB_PORT=5433` comes from instead of Postgres's default `5432`. That's intentional, not a typo: publishing on `5433` avoids clashing with a Postgres instance already installed natively on your machine, which is worth knowing before you lose time chasing a "port already in use" error.
-3. Start the database:
+2. Copy `.env.example` to `.env` and adjust the values if needed. Compose reads this file to configure both services.
+3. Build and start everything:
    ```bash
-   docker compose up -d
+   docker compose up --build
    ```
-4. Export the same database credentials as environment variables so Spring Boot can pick them up. This is a separate step from step 2, not a duplicate of it: Docker Compose reads `.env` itself, but Spring Boot never opens that file — it only reads the OS environment. Two different mechanisms read config from two different places, so the same values have to be provided to both. They must match what's in `.env`:
+   Postgres starts first; the app waits until the database is actually accepting connections, then boots and lets Flyway apply the migrations.
+4. The API is available at `http://localhost:8080/api/v1/job-applications`.
+
+Nothing else to install: no local JDK, no Maven, no native Postgres. In this mode the app reaches the database at `db:5432` — the service name on Compose's internal network — which is set for you in `docker-compose.yml`.
+
+### Development mode (app from the IDE)
+
+When I'm actually writing code I only containerise the database and run the app from IntelliJ, so I keep hot reload and the debugger:
+
+1. Copy `.env.example` to `.env` as above.
+2. Start only the database:
+   ```bash
+   docker compose up -d db
+   ```
+3. Export the same credentials as environment variables so Spring Boot can pick them up. This is a separate step, not a duplicate of step 1: Compose reads `.env` itself, but Spring Boot never opens that file — it only reads the OS environment. Two mechanisms, two sources, same values:
 
    Bash:
    ```bash
@@ -38,30 +58,12 @@ A small REST API to track my own job applications (company, role, source, status
    $env:DB_USERNAME = "postgres"
    $env:DB_PASSWORD = "changeme"
    ```
-5. Run the app:
+4. Run the app:
    ```bash
    ./mvnw spring-boot:run
    ```
-   Flyway runs the migration automatically on startup and creates the `job_application` table.
-6. The API is available at `http://localhost:8080/api/v1/job-applications`.
 
-### Running the app itself in Docker (Stage 4, temporary)
-
-The app can also be built and run as a container, separately from the Postgres one:
-
-```bash
-docker build -t job-application-manager .
-
-docker run --rm -p 8080:8080 \
-  -e DB_HOST=host.docker.internal \
-  -e DB_PORT=5433 \
-  -e DB_USERNAME=postgres \
-  -e DB_PASSWORD=<your-password> \
-  -e DB_NAME=application_manager_db \
-  job-application-manager
-```
-
-`DB_HOST=host.docker.internal` is what lets the app container reach the Postgres container, which is only published on the host's `localhost` today. Passing credentials by hand like this is a stopgap, not the intended setup — Stage 5 wires both containers together with `docker compose` so they share a network and the credentials come from `.env` instead of the command line.
+Here the app runs on the host, so it reaches the database at `localhost:5433` — the published port, which is `5433` rather than Postgres's default `5432` to avoid clashing with a Postgres instance already installed natively on the machine. Same application, different database host depending on where it's running: `db:5432` inside the Compose network, `localhost:5433` from outside it. `5433` is also the port to point DBeaver (or any other client) at, in either mode.
 
 ## Endpoints
 
@@ -147,6 +149,13 @@ Note there's no `status` in the request — see [Design decisions](#design-decis
 - The final stage runs as a non-root user rather than root.
 - Switched the runtime base image from `eclipse-temurin:21-jre-jammy` (Ubuntu-based) to `eclipse-temurin:21-jre-alpine`, which dropped the final image size from 508 MB to 387 MB.
 - Confirmed the image builds and runs standalone with `docker run`, pointed at the Postgres container via env vars. Wiring it into `docker compose` alongside Postgres, instead of passing credentials by hand on the command line, is Stage 5.
+
+### Stage 5 — Full-stack Docker Compose
+
+- Declared the app and Postgres as two services in a single `docker-compose.yml`, so the whole system comes up with `docker compose up --build` instead of a hand-written `docker run` plus a separately started database.
+- The app now finds the database by service name (`db`) over Compose's internal network rather than through `localhost`. That also makes the old conflict with a natively installed Postgres disappear by construction: inside that network, the host's Postgres simply doesn't exist.
+- Added a `pg_isready` healthcheck on `db` and `depends_on: condition: service_healthy` on the app, so the app doesn't start until the database is actually accepting connections — not merely until its container exists.
+- Adapted the official Compose example to Spring Boot 4 again: the entrypoint is a plain `java -jar app.jar`, since the `JarLauncher` invocation the example uses no longer applies.
 
 ## Testing
 
@@ -299,6 +308,24 @@ This section is deliberately not a description of what the code does — it's *w
 
 **Why:** if the app is ever compromised, a container running as root hands an attacker far more than one running as a limited user — root inside the container is a short step from root on the host in a surprising number of misconfigurations. Creating a dedicated user costs a few lines in the Dockerfile; it's cheap defense in depth.
 
+### `depends_on` alone isn't enough — it needs a healthcheck
+
+**Decision:** ordered startup comes from three pieces working together: `depends_on` on the app service, `condition: service_healthy`, and an actual healthcheck defined on `db`. Any one of them alone doesn't do the job.
+
+**Why:** plain `depends_on` only waits for the database *container* to exist, not for Postgres inside it to be ready to accept connections. Those are seconds apart, and the app loses that race: without the healthcheck it boots against a database still initialising and fails to connect — exactly the error that showed up the first time I wired this. The healthcheck (`pg_isready -U ... -d ...`) is what Compose polls to decide the database is genuinely ready, and `condition: service_healthy` is what makes the app wait for that verdict instead of for the container's mere existence.
+
+### Service-name networking instead of `localhost`
+
+**Decision:** the app is configured with `DB_HOST=db` — the Compose service name — not `localhost`.
+
+**Why:** inside Compose's internal network every service is reachable by its own name, and `db` resolves to the Postgres container and nothing else. That removes the "which Postgres am I actually connected to?" question at the root: it can never accidentally resolve to a Postgres installed on the machine, because that one isn't on this network. The app and the database only see each other there. `localhost` inside the app container would mean the app container itself, which is exactly the wrong thing.
+
+### Internal port (5432) vs. published port (5433)
+
+**Decision:** the app talks to the database on `5432`, the container's internal port; `5433` is published to the host purely so I can connect with DBeaver.
+
+**Why:** these are two separate paths. Container-to-container traffic goes over the Compose network straight to the internal port, so the app uses `5432` and the port mapping is irrelevant to it. The `5433:5432` mapping exists only for access from outside the network, and `5433` is chosen there to avoid colliding with a natively installed Postgres sitting on `5432`. Put plainly: the app doesn't need the published port — I do.
+
 ## Scalability considerations
 
 None of this is wired up yet, on purpose — it's sized for one user (me) hitting it from Postman, not production traffic. Here's specifically what's missing and why it matters:
@@ -314,3 +341,9 @@ None of this is wired up yet, on purpose — it's sized for one user (me) hittin
 **State–date invariant for interviews.** A terminal result implies the interview has already taken place, so its `scheduledAt` can't be in the future: an interview marked `PASSED`, `FAILED`, or `CANCELLED` must carry a past-or-present date, and only a `PENDING` interview may be scheduled ahead. Stated the other way round — "reject a future date when the result is `FAILED` or `PASSED`" — it's the same rule but easy to get backwards; the invariant is *terminal result ⟹ date not in the future*. This is a domain rule that isn't enforced today: the update endpoint will currently accept `"result": "PASSED"` alongside a `scheduledAt` next month. It belongs as a cross-field validation on `InterviewUpdateRequest`.
 
 **Coverage for the `InterviewController` layer.** The `Interview` HTTP flow — routing, status codes, the nested-route 404s — is currently only exercised incidentally. It needs its own integration test alongside `JobApplicationIntegrationTest`.
+
+**Spring profiles for local vs. prod.** There's a single configuration today. A `local` and a `prod` profile would let per-environment concerns diverge — SQL logging and log levels being the obvious ones — activated with `-Dspring.profiles.active=...` in the container entrypoint. Not done now because with only one real environment the benefit is theoretical; it earns its place once there's an actual deployment to differ from.
+
+**Docker secrets for the database password.** The password is passed as an environment variable from `.env`. Docker secrets — a file mounted into the container and readable only there — is the stronger option for production, since the environment of a running container can be inspected. For a project that only runs locally, environment variables are an acceptable trade.
+
+**Compose Watch / a dedicated debug stage.** The official Compose example adds Compose Watch (rebuild-on-edit) and a remote-debug stage to attach IntelliJ to. Neither was adopted: the real development loop here is running the app from the IDE with only Postgres containerised, where hot reload and debugging come for free. Watch solves developing *inside* the container — a workflow this project doesn't use.
