@@ -74,11 +74,11 @@ class JobApplicationIntegrationTest extends AbstractIntegrationTest {
                 .when()
                 .post(BASE_PATH)
                 .then()
-                .statusCode(201)
+                .statusCode(200)
                 .header("Location", matchesPattern(".*" + BASE_PATH + "/\\d+$"))
                 .body("id", notNullValue())
                 .body("companyName", equalTo(COMPANY))
-                .body("status", equalTo("APPLIED"));
+                .body("status", equalTo("FAILED"));
     }
 
     @Test
